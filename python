@@ -1,0 +1,132 @@
+import os
+import time
+import json
+import hashlib
+import requests
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+
+# ================== إعدادات ==================
+# ================== إعدادات ==================
+PAGE_URL = "https://www.facebook.com/media/set/?set=a.185978766546790&type=3&mibextid=Nif5oz"
+SAVE_DIR = "images"
+STATE_FILE = "state.json"
+
+SCROLL_PAUSE = 2
+CYCLE_SLEEP = 3   # استراحة بين الدورات (أمان)
+MAX_IDLE_CYCLES = 10  # كم دورة بدون صور جديدة قبل ما نعتبر خلص
+# ============================================
+
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+# ================== تحميل الحالة ==================
+state = {"downloaded": {}}
+
+if os.path.exists(STATE_FILE):
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            c = f.read().strip()
+            if c:
+                state = json.loads(c)
+    except:
+        print("⚠️ state.json تالف – بدء جديد")
+
+downloaded = state["downloaded"]
+print(f"🔄 صور محفوظة سابقًا: {len(downloaded)}")
+
+# ================== المتصفح ==================
+options = webdriver.ChromeOptions()
+options.add_argument("--start-maximized")
+options.add_argument("--disable-notifications")
+
+driver = webdriver.Chrome(
+    service=Service(ChromeDriverManager().install()),
+    options=options
+)
+
+driver.get(PAGE_URL)
+time.sleep(10)
+
+idle_cycles = 0
+
+# ================== التشغيل المستمر ==================
+while True:
+    try:
+        # ⬇️ Scroll
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
+        time.sleep(SCROLL_PAUSE)
+
+        thumbs = driver.find_elements(By.XPATH, "//a[contains(@href,'/photo')]")
+
+        new_found = 0
+
+        for thumb in thumbs:
+            try:
+                href = thumb.get_attribute("href")
+                if not href:
+                    continue
+
+                photo_id = hashlib.md5(href.encode()).hexdigest()
+                if photo_id in downloaded:
+                    continue
+
+                new_found += 1
+
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", thumb)
+                thumb.click()
+                time.sleep(3)
+
+                img = driver.find_element(
+                    By.XPATH,
+                    "//img[@data-visualcompletion='media-vc-image']"
+                )
+
+                src = img.get_attribute("src")
+                if "&name=" in src:
+                    src = src.split("&name=")[0] + "&name=orig"
+
+                img_data = requests.get(src, timeout=20).content
+
+                with open(os.path.join(SAVE_DIR, f"{photo_id}.jpg"), "wb") as f:
+                    f.write(img_data)
+
+                downloaded[photo_id] = True
+                with open(STATE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(state, f)
+
+                print(f"⬇️ تم التحميل: {len(downloaded)}")
+
+                driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+                time.sleep(SCROLL_PAUSE)
+
+            except Exception:
+                try:
+                    driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+                except:
+                    pass
+                continue
+
+        # ✅ إذا ما في ولا صورة جديدة
+        if new_found == 0:
+            idle_cycles += 1
+            print(f"⏳ لا صور جديدة ({idle_cycles}/{MAX_IDLE_CYCLES})")
+        else:
+            idle_cycles = 0
+
+        # ⛔ وصلنا للنهاية
+        if idle_cycles >= MAX_IDLE_CYCLES:
+            print("✅ يبدو أنه لا توجد صور إضافية – العملية انتهت")
+            break
+
+        time.sleep(CYCLE_SLEEP)
+
+    except Exception as e:
+        print("⚠️ خلل عام – إعادة المحاولة بعد 10 ثواني")
+        time.sleep(10)
+        continue
+
+driver.quit()
+print("✅ انتهى التحميل الكامل بدون توقف")
