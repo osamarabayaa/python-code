@@ -1,0 +1,111 @@
+import os
+import re
+import csv
+from mutagen import File as MutagenFile
+
+# ---------------- CONFIG ----------------
+BASE_DIR = r"C:\Users\osama\Desktop\work"
+EXCEL_PATH = r"C:\Users\osama\Desktop\work\all_packages_status.xlsx"
+SHEET_NAME = "TRAIN"
+OUTPUT_CSV = r"C:\Users\osama\Desktop\work\package_durations.csv"
+# ----------------------------------------
+
+from openpyxl import load_workbook
+
+wb = load_workbook(EXCEL_PATH)
+sheet = wb[SHEET_NAME]
+
+# تنظيف الاسم (حذف جميع أنواع المسافات + تحويل لصغير)
+def clean_name(name):
+    if name is None:
+        return ""
+    name = str(name)
+    name = re.sub(r"\s+", "", name, flags=re.UNICODE)
+    return name.strip().lower()
+
+# بحث عن كل المجلدات المطابقة (يرجع قائمة مسارات كاملة)
+def find_all_matching_folders(base_path, target_folder):
+    matches = []
+    target_clean = clean_name(target_folder)
+    for root, dirs, files in os.walk(base_path):
+        for d in dirs:
+            if clean_name(d) == target_clean:
+                matches.append(os.path.join(root, d))
+    return matches
+
+# حساب المجموع (المدة بالثواني) فقط لل wav
+def get_total_wav_duration(folder_path):
+    total_seconds = 0.0
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            if file.lower().endswith(".wav"):
+                file_path = os.path.join(root, file)
+                try:
+                    audio = MutagenFile(file_path)
+                    if audio is not None and hasattr(audio, "info") and getattr(audio.info, "length", None):
+                        total_seconds += audio.info.length
+                except:
+                    pass
+    return total_seconds
+
+# تحويل ثواني إلى HH:MM:SS
+def format_time(seconds):
+    seconds = int(round(seconds))
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    return f"{h:02}:{m:02}:{s:02}"
+
+# إيجاد عمود "Pakages name"
+header_row = 1
+pakages_col = None
+for col in range(1, sheet.max_column + 1):
+    cell_val = sheet.cell(row=header_row, column=col).value
+    if cell_val and str(cell_val).strip().lower() == "pakages name".strip().lower():
+        pakages_col = col
+        break
+
+if pakages_col is None:
+    raise ValueError("لم أجد عمود بعنوان 'Pakages name' في الصف الأول.")
+
+# جمع البيانات
+report_data = []
+
+for row in range(2, sheet.max_row + 1):
+    pkg_name = sheet.cell(row=row, column=pakages_col).value
+    if not pkg_name:
+        continue
+
+    matches = find_all_matching_folders(BASE_DIR, pkg_name)
+    if not matches:
+        print(f"[NOT FOUND] {pkg_name}")
+        report_data.append({
+            "package_name": pkg_name,
+            "duration_seconds": 0,
+            "duration_minutes": 0,
+            "duration_hh_mm_ss": "00:00:00"
+        })
+        continue
+
+    total_sec = sum(get_total_wav_duration(m) for m in matches)
+    total_min = total_sec / 60
+    hh_mm_ss = format_time(total_sec)
+
+    report_data.append({
+        "package_name": pkg_name,
+        "duration_seconds": round(total_sec, 2),
+        "duration_minutes": round(total_min, 2),
+        "duration_hh_mm_ss": hh_mm_ss
+    })
+
+    print(f"[OK] {pkg_name} → {hh_mm_ss} ({total_min:.2f} min)")
+
+# كتابة CSV
+with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
+    writer = csv.DictWriter(f, fieldnames=["package_name", "duration_seconds", "duration_minutes", "duration_hh_mm_ss"])
+    writer.writeheader()
+    for row in report_data:
+        writer.writerow(row)
+
+print("✔ CSV report created:", OUTPUT_CSV)
+ okay try this one if u still have any issues
