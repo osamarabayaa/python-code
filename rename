@@ -1,0 +1,59 @@
+import os
+import pandas as pd
+
+# ================= CONFIG =================
+BASE_DIR = r"C:\Users\osama\Desktop\task\20251225\03c40bca-616e-11f0-a07f-f202ab9c649d-female_middle-aged"
+EXCEL_PATH = r"C:\Users\osama\Desktop\task\Aqlama_metadata.xlsx"
+SHEET_NAME = "Sheet1"
+SCRIPT_COL = "script_id"
+AUDIO_COL = "audio_file"
+# =========================================
+
+# قراءة الاكسل
+df = pd.read_excel(EXCEL_PATH, sheet_name=SHEET_NAME)
+
+# تجميع الصفوف حسب script_id
+grouped = df.groupby(SCRIPT_COL)
+
+for script_id, group in grouped:
+    script_folder = os.path.join(BASE_DIR, str(script_id))
+
+    if not os.path.isdir(script_folder):
+        print(f"❌ Script folder not found: {script_folder}")
+        continue
+
+    # جمع كل ملفات wav داخل جميع المجلدات
+    wav_files = []
+
+    for root, dirs, files in os.walk(script_folder):
+        for f in files:
+            if f.lower().endswith(".wav"):
+                wav_files.append(os.path.join(root, f))
+
+    wav_files.sort()
+
+    new_names = group[AUDIO_COL].astype(str).tolist()
+
+    if len(wav_files) != len(new_names):
+        print(
+            f"⚠️ Count mismatch in {script_id}: "
+            f"{len(wav_files)} wav files vs {len(new_names)} excel rows"
+        )
+        continue
+
+    for old_path, new_name in zip(wav_files, new_names):
+        folder = os.path.dirname(old_path)
+
+        if not new_name.lower().endswith(".wav"):
+            new_name += ".wav"
+
+        new_path = os.path.join(folder, new_name)
+
+        if os.path.exists(new_path):
+            print(f"⚠️ File already exists, skipped: {new_path}")
+            continue
+
+        os.rename(old_path, new_path)
+        print(f"✅ Renamed: {old_path} -> {new_name}")
+
+print("\n🎉 Done")
